@@ -1,4 +1,10 @@
-import { Show } from "solid-js";
+import { Show, createEffect, on } from "solid-js";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+
+const BASE_WIDTH = 300;
+const BASE_HEIGHT = 110;
+const EXPANDED_WIDTH = 380;
+const EXPANDED_HEIGHT = 200;
 
 interface Props {
   state: string;
@@ -36,13 +42,31 @@ function RecordingOverlay(props: Props) {
   const isProcessing = () =>
     ["processing", "transcribing", "post_processing"].includes(props.state);
 
+  // Auto-resize window when text content appears or disappears
+  // Skip resize when state is "done" — the backend will hide the overlay,
+  // and calling setSize() at this point would race with hide() and steal focus.
+  createEffect(
+    on(
+      () => ({ hasContent: !!displayText() || !!props.error, isDone: props.state === "done" }),
+      ({ hasContent, isDone }) => {
+        if (isDone) return;
+        const win = getCurrentWindow();
+        if (hasContent) {
+          win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
+        } else {
+          win.setSize(new LogicalSize(BASE_WIDTH, BASE_HEIGHT));
+        }
+      }
+    )
+  );
+
   return (
-    <div class="flex h-full items-center justify-center p-2">
-      <div class="w-full rounded-xl p-3">
-        {/* Status Bar */}
-        <div class="mb-2 flex items-center gap-2">
+    <div class="h-screen w-screen p-1">
+      <div class="flex h-full flex-col rounded-xl bg-gray-900 p-4">
+      {/* Status Bar */}
+      <div class="flex items-center gap-2">
           <div
-            class={`h-2 w-2 rounded-full ${
+            class={`h-2.5 w-2.5 rounded-full ${
               isRecording()
                 ? "animate-pulse bg-red-500"
                 : isProcessing()
@@ -52,12 +76,12 @@ function RecordingOverlay(props: Props) {
                     : "bg-gray-400"
             }`}
           />
-          <span class="text-xs font-medium text-white/80">{stateLabel()}</span>
+          <span class="text-sm font-medium text-white/90">{stateLabel()}</span>
         </div>
 
         {/* Waveform placeholder */}
         <Show when={isRecording()}>
-          <div class="mb-2 flex h-8 items-center justify-center gap-[2px]">
+          <div class="mt-3 flex h-8 items-center justify-center gap-[2px]">
             {Array.from({ length: 20 }).map((_, i) => (
               <div
                 class="w-[3px] animate-pulse rounded-full bg-white/50"
@@ -73,28 +97,28 @@ function RecordingOverlay(props: Props) {
 
         {/* Text display */}
         <Show when={displayText()}>
-          <div class="max-h-16 overflow-y-auto rounded-lg bg-white/10 px-2 py-1.5">
-            <p class="text-xs leading-relaxed text-white/90">{displayText()}</p>
+          <div class="mt-3 min-h-0 flex-1 overflow-y-auto">
+            <p class="text-sm leading-relaxed text-white/90">{displayText()}</p>
           </div>
         </Show>
 
         {/* Error display */}
         <Show when={props.error}>
-          <div class="mt-1 rounded-lg bg-red-500/20 px-2 py-1">
-            <p class="text-xs text-red-300">{props.error}</p>
+          <div class="mt-3 rounded-lg bg-red-500/20 px-3 py-2">
+            <p class="text-sm text-red-300">{props.error}</p>
           </div>
         </Show>
 
         {/* Idle hint */}
         <Show when={props.state === "idle" && !displayText()}>
-          <p class="text-center text-xs text-white/40">
+          <p class="mt-3 text-center text-xs text-white/40">
             Press Option+Space to start
           </p>
         </Show>
 
         {/* Escape hint */}
         <Show when={props.state !== "idle" && props.state !== "done"}>
-          <p class="mt-1 text-center text-[10px] text-white/30">
+          <p class="mt-2 text-center text-[10px] text-white/30">
             Esc to cancel
           </p>
         </Show>

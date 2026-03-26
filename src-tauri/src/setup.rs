@@ -3,7 +3,6 @@ use my_mind_tauri::commands::recording;
 use my_mind_tauri::state::AppState;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::window::{Effect, EffectsBuilder};
 use tauri::{App, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tracing::{error, info, warn};
@@ -15,11 +14,6 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // Setup global shortcut
     setup_shortcut(app)?;
 
-    // macOS native vibrancy effect
-    let effects = EffectsBuilder::new()
-        .effect(Effect::HudWindow)
-        .build();
-
     // Create the recording overlay window (hidden by default)
     let _window = tauri::WebviewWindowBuilder::new(
         app,
@@ -27,9 +21,9 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("My Mind")
-    .inner_size(280.0, 120.0)
+    .inner_size(300.0, 110.0)
     .decorations(false)
-    .effects(effects)
+    .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
     .center()

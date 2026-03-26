@@ -67,7 +67,7 @@ function App() {
   });
 
   return (
-    <div class="h-screen w-screen select-none" style="background: transparent;">
+    <div class="h-screen w-screen select-none">
       <RecordingOverlay
         state={state()}
         asrText={asrText()}
