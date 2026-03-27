@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::llm::prompts;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -55,6 +57,9 @@ pub struct LlmConfig {
     /// Enable LLM post-processing
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// System prompt for post-processing. If empty, uses built-in default.
+    #[serde(default)]
+    pub prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +131,18 @@ impl Default for LlmConfig {
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
             enabled: true,
+            prompt: String::new(),
+        }
+    }
+}
+
+impl LlmConfig {
+    /// Returns the effective prompt: user-configured if non-empty, otherwise built-in default.
+    pub fn effective_prompt(&self) -> &str {
+        if self.prompt.is_empty() {
+            prompts::POST_PROCESS_PROMPT
+        } else {
+            &self.prompt
         }
     }
 }

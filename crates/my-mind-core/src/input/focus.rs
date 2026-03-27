@@ -29,32 +29,44 @@ impl FocusManager {
         }
     }
 
+    /// macOS: Get the frontmost app using `lsappinfo`.
+    /// Unlike osascript + System Events, this does not require Automation permissions.
     #[cfg(target_os = "macos")]
     fn get_frontmost_app_macos() -> Result<Option<String>> {
         use std::process::Command;
 
-        let output = Command::new("osascript")
-            .arg("-e")
-            .arg(
-                r#"tell application "System Events" to get bundle identifier of first application process whose frontmost is true"#,
-            )
+        // Step 1: Get the ASN (Application Serial Number) of the frontmost app
+        let front_output = Command::new("lsappinfo").arg("front").output()?;
+        let asn = String::from_utf8_lossy(&front_output.stdout).trim().to_string();
+        if asn.is_empty() || asn == "0x0-0x0" {
+            warn!("[focus] lsappinfo front returned empty or null ASN");
+            return Ok(None);
+        }
+
+        // Step 2: Get the bundle ID for that ASN
+        let info_output = Command::new("lsappinfo")
+            .args(["info", "-only", "bundleid", &asn])
             .output()?;
+        let info = String::from_utf8_lossy(&info_output.stdout).trim().to_string();
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("[focus] Failed to get frontmost app: {}", stderr.trim());
-            return Ok(None);
+        // Parse output format: "bundleid"="com.tencent.xinWeChat"
+        if let Some(start) = info.find("=\"") {
+            let rest = &info[start + 2..];
+            if let Some(end) = rest.find('"') {
+                let bundle_id = &rest[..end];
+                if !bundle_id.is_empty() {
+                    info!("[focus] Captured frontmost app: {}", bundle_id);
+                    return Ok(Some(bundle_id.to_string()));
+                }
+            }
         }
 
-        let bundle_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if bundle_id.is_empty() {
-            return Ok(None);
-        }
-
-        info!("[focus] Captured frontmost app: {}", bundle_id);
-        Ok(Some(bundle_id))
+        warn!("[focus] Could not parse bundle ID from lsappinfo output: {}", info);
+        Ok(None)
     }
 
+    /// macOS: Activate app using `open -b`.
+    /// Unlike osascript, this does not require Automation permissions.
     #[cfg(target_os = "macos")]
     fn activate_app_macos(bundle_id: &str) -> Result<()> {
         use std::process::Command;
@@ -64,22 +76,13 @@ impl FocusManager {
             .chars()
             .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
         {
-            anyhow::bail!(
-                "Invalid bundle identifier format: {}",
-                bundle_id
-            );
+            anyhow::bail!("Invalid bundle identifier format: {}", bundle_id);
         }
-
-        let script = format!(
-            r#"tell application id "{}" to activate"#,
-            bundle_id
-        );
 
         info!("[focus] Activating app: {}", bundle_id);
 
-        let status = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
+        let status = Command::new("open")
+            .args(["-b", bundle_id])
             .status()?;
 
         if status.success() {

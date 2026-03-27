@@ -18,13 +18,16 @@
 - **在线语音识别** - 兼容 Whisper API 的语音识别，支持 OpenAI、SiliconFlow 等服务商
 - **LLM 智能后处理** - 由 OpenAI 或 Anthropic 兼容 API 驱动的转录文本优化
   - 去除口头禅、结巴重复和自我纠正
-  - 修正同音字错误和 ASR 分词错误
+  - 上下文驱动的智能纠错（同音字、字母数字混淆等）
   - 自动添加标点和合理分段
-  - 长文本自动结构化（步骤列表、要点列举等）
+  - 自适应输出：闲聊保持简洁，长文本自动结构化（步骤列表、要点加粗等）
+- **自定义 Prompt** - 在设置界面自定义 LLM 后处理 Prompt，或使用内置默认 Prompt
 - **自动粘贴** - 处理完成后自动粘贴到之前活跃的应用（微信、浏览器、编辑器等）
+- **错误反馈** - 粘贴失败时浮层显示错误提示，文本保留在剪贴板供手动粘贴
 - **焦点管理** - 录音前捕获当前活跃应用，处理完成后自动恢复焦点
-- **设置界面** - 从系统托盘菜单打开，可视化配置 ASR、LLM、快捷键等参数
-- **macOS 原生体验** - HudWindow 毛玻璃浮层、系统托盘集成、基于辅助功能的输入模拟
+- **历史记录** - 所有转录结果本地保存（SQLite），可在独立窗口中浏览、复制、删除历史记录
+- **设置界面** - 从系统托盘菜单打开，可视化配置 ASR、LLM、Prompt、快捷键等参数
+- **macOS 原生体验** - HudWindow 毛玻璃浮层、系统托盘集成、辅助功能权限自动检测、CGEvent 输入模拟
 
 ## 技术栈
 
@@ -33,6 +36,7 @@
 - **音频**：CPAL（采集）+ Rubato（重采样）+ Hound（WAV 编码）
 - **语音识别**：Whisper API 兼容（REST，multipart 上传）
 - **语言模型**：OpenAI / Anthropic API 兼容
+- **数据存储**：SQLite via rusqlite（内置编译，无系统依赖）
 
 ## 快速开始
 
@@ -60,6 +64,7 @@ api_base_url = "https://api.moonshot.cn/v1"      # 或任何 OpenAI 兼容的接
 model = "kimi-k2-turbo-preview"                  # 可选，默认：gpt-4o-mini
 temperature = 0.3
 enabled = true
+prompt = ""  # 留空使用内置默认 Prompt，或填写自定义系统提示词
 
 [shortcuts]
 record = "Alt+Space"
@@ -95,24 +100,27 @@ cargo tauri build
 ```
 my-mind/
 ├── crates/
-│   ├── my-mind-core/     # 核心库：音频、ASR、LLM、流水线
-│   └── my-mind-tauri/    # Tauri 命令、状态、事件
+│   ├── my-mind-core/        # 核心库：音频、ASR、LLM、流水线、历史存储
+│   └── my-mind-tauri/       # Tauri 命令、状态、事件
 ├── packages/
-│   └── web/              # SolidJS 前端（录音浮层 + 设置界面）
-├── src-tauri/            # Tauri 应用入口、初始化、配置
-└── Cargo.toml            # Rust workspace 根配置
+│   └── web/                 # SolidJS 前端（录音浮层 + 设置界面 + 历史记录）
+├── src-tauri/               # Tauri 应用入口、初始化、托盘、快捷键
+└── Cargo.toml               # Rust workspace 根配置
 ```
+
+## 数据存储
+
+- **配置文件**：`~/.config/my-mind/config.toml`
+- **历史记录**：`~/.config/my-mind/history.db`（SQLite）
 
 ## 未来规划
 
 - [ ] 离线语音识别（本地 Whisper 模型）
-- [ ] 设置界面中支持自定义 Prompt 编辑
 - [ ] 快捷键热更新（修改后无需重启）
 - [ ] 流式语音识别，实时显示转录文本
 - [ ] 多语言自动检测
 - [ ] Windows 和 Linux 平台支持
-- [ ] 语音历史记录与转录日志
-- [ ] 自定义后处理规则
+- [ ] 历史记录搜索与导出
 
 ## 许可证
 

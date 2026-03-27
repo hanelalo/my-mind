@@ -18,13 +18,16 @@ A lightweight, intelligent voice-to-text desktop application for macOS. Press a 
 - **Online ASR** - Whisper API-compatible speech recognition, works with OpenAI, SiliconFlow, and other providers
 - **LLM Post-Processing** - Intelligent cleanup of ASR output powered by OpenAI or Anthropic-compatible APIs
   - Removes filler words, stuttering, and self-corrections
-  - Fixes homophone errors and ASR segmentation mistakes
+  - Context-driven error correction (homophones, letter-number confusion, etc.)
   - Adds proper punctuation and formatting
-  - Structures long content with lists when appropriate
+  - Adaptive output: casual chat stays concise, substantive content gets structured with lists and highlights
+- **Custom Prompt** - Customize the LLM post-processing prompt in Settings, or use the built-in default
 - **Auto-Paste** - Automatically pastes the result into the previously active application (WeChat, browser, editor, etc.)
+- **Error Feedback** - Overlay shows error messages on failure; text stays in clipboard for manual paste
 - **Focus Management** - Captures the frontmost app before showing the overlay, restores focus after processing
-- **Settings UI** - Configure ASR, LLM, shortcuts, and output preferences from the system tray
-- **macOS Native** - HudWindow overlay effect, system tray integration, accessibility-based input simulation
+- **History** - All transcriptions are saved locally (SQLite). Browse, search, copy, and delete past records from the History window
+- **Settings UI** - Configure ASR, LLM, prompt, shortcuts, and output preferences from the system tray
+- **macOS Native** - HudWindow overlay effect, system tray integration, accessibility permission auto-detection, CGEvent-based input simulation
 
 ## Tech Stack
 
@@ -33,6 +36,7 @@ A lightweight, intelligent voice-to-text desktop application for macOS. Press a 
 - **Audio**: CPAL (capture) + Rubato (resampling) + Hound (WAV encoding)
 - **ASR**: Whisper API-compatible (REST, multipart upload)
 - **LLM**: OpenAI / Anthropic API-compatible
+- **Storage**: SQLite via rusqlite (bundled, no system dependency)
 
 ## Getting Started
 
@@ -60,6 +64,7 @@ api_base_url = "https://api.moonshot.cn/v1"      # or any OpenAI-compatible endp
 model = "kimi-k2-turbo-preview"                  # optional, default: gpt-4o-mini
 temperature = 0.3
 enabled = true
+prompt = ""  # leave empty for built-in default, or set your own system prompt
 
 [shortcuts]
 record = "Alt+Space"
@@ -95,24 +100,27 @@ On first launch, macOS will ask for:
 ```
 my-mind/
 ├── crates/
-│   ├── my-mind-core/     # Core library: audio, ASR, LLM, pipeline
-│   └── my-mind-tauri/    # Tauri commands, state, events
+│   ├── my-mind-core/        # Core library: audio, ASR, LLM, pipeline, history storage
+│   └── my-mind-tauri/       # Tauri commands, state, events
 ├── packages/
-│   └── web/              # SolidJS frontend (overlay + settings UI)
-├── src-tauri/            # Tauri app entry, setup, config
-└── Cargo.toml            # Rust workspace root
+│   └── web/                 # SolidJS frontend (overlay + settings + history UI)
+├── src-tauri/               # Tauri app entry, setup, tray, shortcuts
+└── Cargo.toml               # Rust workspace root
 ```
+
+## Data Storage
+
+- **Config**: `~/.config/my-mind/config.toml`
+- **History**: `~/.config/my-mind/history.db` (SQLite)
 
 ## Roadmap
 
 - [ ] Offline ASR support (local Whisper model)
-- [ ] Custom prompt editing in Settings UI
 - [ ] Shortcut hot-reload (apply without restart)
 - [ ] Streaming ASR for real-time transcription display
 - [ ] Multi-language auto-detection
 - [ ] Windows and Linux support
-- [ ] Audio history and transcript log
-- [ ] Custom post-processing rules
+- [ ] History search and export
 
 ## License
 

@@ -1,4 +1,4 @@
-use my_mind_core::input::FocusManager;
+use my_mind_core::input::{FocusManager, InputSimulator};
 use my_mind_tauri::commands::recording;
 use my_mind_tauri::state::AppState;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -8,6 +8,17 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tracing::{error, info, warn};
 
 pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
+    // Check accessibility permission at startup (macOS: shows system prompt if not granted)
+    #[cfg(target_os = "macos")]
+    {
+        let trusted = InputSimulator::request_accessibility_permission();
+        if trusted {
+            info!("[setup] Accessibility permission granted");
+        } else {
+            warn!("[setup] Accessibility permission NOT granted — paste will not work until granted");
+        }
+    }
+
     // Setup system tray
     setup_tray(app)?;
 
@@ -21,7 +32,7 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title("My Mind")
-    .inner_size(300.0, 110.0)
+    .inner_size(360.0, 180.0)
     .decorations(false)
     .transparent(true)
     .always_on_top(true)
@@ -36,9 +47,10 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
 
 fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let history = MenuItem::with_id(app, "history", "History", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit My Mind", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&settings, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&settings, &history, &separator, &quit])?;
 
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))?;
 
@@ -71,6 +83,29 @@ fn setup_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
                         Err(e) => error!("Failed to create settings window: {}", e),
                     }
                 }
+            } else if event.id() == "history" {
+                info!("History clicked from tray menu");
+                if let Some(window) = app.get_webview_window("history") {
+                    let _ = window.set_focus();
+                } else {
+                    match tauri::WebviewWindowBuilder::new(
+                        app,
+                        "history",
+                        tauri::WebviewUrl::App("index.html".into()),
+                    )
+                    .title("My Mind - History")
+                    .inner_size(700.0, 500.0)
+                    .min_inner_size(500.0, 400.0)
+                    .decorations(true)
+                    .always_on_top(false)
+                    .center()
+                    .visible(true)
+                    .build()
+                    {
+                        Ok(_) => info!("History window created"),
+                        Err(e) => error!("Failed to create history window: {}", e),
+                    }
+                }
             } else if event.id() == "quit" {
                 info!("Quit from tray menu");
                 app.exit(0);
@@ -92,26 +127,34 @@ fn setup_shortcut(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             ShortcutState::Pressed => {
                 info!("Shortcut pressed");
 
-                // Capture the frontmost app BEFORE showing overlay (which steals focus)
+                // Capture the frontmost app ONLY on first press (before recording starts).
+                // On second press (stop), previous_app already holds the correct target app.
+                // previous_app is reset to None via .take() after pipeline completes.
                 let state = app_handle.state::<AppState>();
-                match FocusManager::get_frontmost_app() {
-                    Ok(Some(bundle_id)) => {
-                        *state.previous_app.lock().unwrap() = Some(bundle_id);
-                    }
-                    Ok(None) => {
-                        warn!("[focus] Could not determine frontmost app");
-                        *state.previous_app.lock().unwrap() = None;
-                    }
-                    Err(e) => {
-                        warn!("[focus] Error getting frontmost app: {}", e);
-                        *state.previous_app.lock().unwrap() = None;
+                {
+                    let current = state.previous_app.lock().unwrap();
+                    if current.is_none() {
+                        drop(current);
+                        match FocusManager::get_frontmost_app() {
+                            Ok(Some(bundle_id)) => {
+                                info!("[focus] Captured frontmost app: {}", bundle_id);
+                                *state.previous_app.lock().unwrap() = Some(bundle_id);
+                            }
+                            Ok(None) => {
+                                warn!("[focus] Could not determine frontmost app");
+                            }
+                            Err(e) => {
+                                warn!("[focus] Error getting frontmost app: {}", e);
+                            }
+                        }
+                    } else {
+                        info!("[focus] previous_app already set, skipping capture");
                     }
                 }
 
-                // Show overlay window
+                // Show overlay window (no set_focus to avoid stealing focus from target app)
                 if let Some(window) = app_handle.get_webview_window("overlay") {
                     let _ = window.show();
-                    let _ = window.set_focus();
                 }
 
                 // Start recording

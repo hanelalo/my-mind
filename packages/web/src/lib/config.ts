@@ -20,6 +20,7 @@ export interface LlmConfig {
   temperature: number;
   max_tokens: number;
   enabled: boolean;
+  prompt: string;
 }
 
 export interface ShortcutConfig {

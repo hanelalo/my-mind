@@ -22,6 +22,7 @@ const defaultConfig: AppConfig = {
     temperature: 0.3,
     max_tokens: 2048,
     enabled: true,
+    prompt: "",
   },
   shortcuts: { record: "Alt+Space", mode: "push_to_talk" },
   output: { auto_paste: true },

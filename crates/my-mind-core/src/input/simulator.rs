@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Simulates keyboard input to paste text into the focused application
 pub struct InputSimulator;
@@ -20,11 +20,37 @@ impl InputSimulator {
         }
     }
 
-    /// Simulate paste shortcut
+    /// Request accessibility permission with system prompt dialog (macOS only).
+    /// Returns true if already granted, false if user needs to grant.
+    #[cfg(target_os = "macos")]
+    pub fn request_accessibility_permission() -> bool {
+        use core_foundation::base::TCFType;
+        use core_foundation::boolean::CFBoolean;
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::string::CFString;
+
+        extern "C" {
+            fn AXIsProcessTrustedWithOptions(
+                options: core_foundation::dictionary::CFDictionaryRef,
+            ) -> bool;
+        }
+
+        let key = CFString::new("AXTrustedCheckOptionPrompt");
+        let value = CFBoolean::true_value();
+        let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
+
+        unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) }
+    }
+
+    /// Simulate paste shortcut (Cmd+V on macOS, Ctrl+V on others)
     pub fn paste() -> Result<()> {
         #[cfg(target_os = "macos")]
         {
-            Self::paste_macos()
+            if !Self::has_accessibility_permission() {
+                warn!("[paste] Accessibility permission NOT granted — CGEvent will be silently ignored");
+                anyhow::bail!("Accessibility permission not granted. Please enable it in System Settings > Privacy & Security > Accessibility for My Mind.");
+            }
+            Self::paste_cg()
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -32,75 +58,48 @@ impl InputSimulator {
         }
     }
 
-    /// Activate the target app and paste in a single osascript call (macOS).
-    /// This is more reliable than separate activate + paste calls.
+    /// Activate the target app and paste.
     pub fn activate_and_paste(bundle_id: &str) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        {
-            Self::activate_and_paste_macos(bundle_id)
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = bundle_id;
-            Self::paste_enigo()
-        }
+        use super::FocusManager;
+
+        info!("[paste] Activating {} then pasting...", bundle_id);
+
+        FocusManager::activate_app(bundle_id)?;
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        Self::paste()?;
+
+        info!("[paste] Activate + paste completed successfully");
+        Ok(())
     }
 
+    /// macOS: Simulate Cmd+V using Core Graphics CGEvent API.
+    /// Unlike enigo, CGEvent does not call TIS input source APIs
+    /// and is safe to use from any thread (no crash in tokio context).
     #[cfg(target_os = "macos")]
-    fn paste_macos() -> Result<()> {
-        use std::process::Command;
+    fn paste_cg() -> Result<()> {
+        use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
-        let status = Command::new("osascript")
-            .arg("-e")
-            .arg(r#"tell application "System Events" to keystroke "v" using command down"#)
-            .status()?;
+        // macOS virtual keycode for 'V'
+        const KV_V: u16 = 0x09;
 
-        if status.success() {
-            info!("Simulated Cmd+V paste via osascript");
-            Ok(())
-        } else {
-            anyhow::bail!("osascript paste failed with status: {}", status)
-        }
-    }
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow::anyhow!("Failed to create CGEventSource"))?;
 
-    #[cfg(target_os = "macos")]
-    fn activate_and_paste_macos(bundle_id: &str) -> Result<()> {
-        use std::process::Command;
+        // Key down: V with Command modifier
+        let key_down = CGEvent::new_keyboard_event(source.clone(), KV_V, true)
+            .map_err(|_| anyhow::anyhow!("Failed to create key down event"))?;
+        key_down.set_flags(CGEventFlags::CGEventFlagCommand);
+        key_down.post(CGEventTapLocation::HID);
 
-        // Validate bundle id format to prevent injection
-        if !bundle_id
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == '_')
-        {
-            anyhow::bail!("Invalid bundle identifier format: {}", bundle_id);
-        }
+        // Key up: V with Command modifier
+        let key_up = CGEvent::new_keyboard_event(source, KV_V, false)
+            .map_err(|_| anyhow::anyhow!("Failed to create key up event"))?;
+        key_up.set_flags(CGEventFlags::CGEventFlagCommand);
+        key_up.post(CGEventTapLocation::HID);
 
-        let script = format!(
-            r#"
-tell application id "{bundle_id}" to activate
-delay 0.5
-tell application "System Events"
-    set frontmost of process (name of first application process whose bundle identifier is "{bundle_id}") to true
-    delay 0.2
-    keystroke "v" using command down
-end tell
-"#,
-            bundle_id = bundle_id
-        );
-
-        info!("[paste] Activating {} and pasting via single osascript...", bundle_id);
-
-        let status = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .status()?;
-
-        if status.success() {
-            info!("[paste] Activate + paste completed successfully");
-            Ok(())
-        } else {
-            anyhow::bail!("Activate + paste failed for: {}", bundle_id)
-        }
+        info!("Simulated Cmd+V paste via CGEvent");
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]

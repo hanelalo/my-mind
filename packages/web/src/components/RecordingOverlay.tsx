@@ -1,10 +1,4 @@
-import { Show, createEffect, on } from "solid-js";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-
-const BASE_WIDTH = 300;
-const BASE_HEIGHT = 110;
-const EXPANDED_WIDTH = 380;
-const EXPANDED_HEIGHT = 200;
+import { Show } from "solid-js";
 
 interface Props {
   state: string;
@@ -42,29 +36,11 @@ function RecordingOverlay(props: Props) {
   const isProcessing = () =>
     ["processing", "transcribing", "post_processing"].includes(props.state);
 
-  // Auto-resize window when text content appears or disappears
-  // Skip resize when state is "done" — the backend will hide the overlay,
-  // and calling setSize() at this point would race with hide() and steal focus.
-  createEffect(
-    on(
-      () => ({ hasContent: !!displayText() || !!props.error, isDone: props.state === "done" }),
-      ({ hasContent, isDone }) => {
-        if (isDone) return;
-        const win = getCurrentWindow();
-        if (hasContent) {
-          win.setSize(new LogicalSize(EXPANDED_WIDTH, EXPANDED_HEIGHT));
-        } else {
-          win.setSize(new LogicalSize(BASE_WIDTH, BASE_HEIGHT));
-        }
-      }
-    )
-  );
-
   return (
     <div class="h-screen w-screen p-1">
       <div class="flex h-full flex-col rounded-xl bg-gray-900 p-4">
-      {/* Status Bar */}
-      <div class="flex items-center gap-2">
+        {/* Status Bar */}
+        <div class="flex items-center gap-2">
           <div
             class={`h-2.5 w-2.5 rounded-full ${
               isRecording()

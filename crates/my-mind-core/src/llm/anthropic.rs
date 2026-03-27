@@ -1,4 +1,4 @@
-use super::{prompts, LlmProvider};
+use super::LlmProvider;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ pub struct AnthropicProvider {
     model: String,
     temperature: f32,
     max_tokens: u16,
+    prompt: String,
 }
 
 #[derive(Serialize)]
@@ -47,6 +48,7 @@ impl AnthropicProvider {
         model: Option<String>,
         temperature: Option<f32>,
         max_tokens: Option<u16>,
+        prompt: String,
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -55,6 +57,7 @@ impl AnthropicProvider {
             model: model.unwrap_or_else(|| "claude-sonnet-4-20250514".to_string()),
             temperature: temperature.unwrap_or(0.3),
             max_tokens: max_tokens.unwrap_or(2048),
+            prompt,
         }
     }
 }
@@ -70,7 +73,7 @@ impl LlmProvider for AnthropicProvider {
 
         let request = MessagesRequest {
             model: self.model.clone(),
-            system: prompts::POST_PROCESS_PROMPT.to_string(),
+            system: self.prompt.clone(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: raw_transcript.to_string(),

@@ -8,7 +8,7 @@ use my_mind_core::pipeline::{Pipeline, PipelineEvent};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// Inner function called by both Tauri command and global shortcut handler
 pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
@@ -30,6 +30,11 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
     // Create event channel for frontend updates
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<PipelineEvent>();
 
+    // Shared slot to capture ASR text for history saving
+    let asr_text_captured: Arc<std::sync::Mutex<Option<String>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let asr_text_for_events = asr_text_captured.clone();
+
     // Build ASR engine
     let asr_engine: Arc<dyn my_mind_core::asr::AsrEngine> =
         Arc::new(WhisperApiEngine::new(
@@ -40,6 +45,7 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
 
     // Build LLM provider (if enabled)
     let llm_provider: Option<Arc<dyn my_mind_core::llm::LlmProvider>> = if config.llm.enabled {
+        let prompt = config.llm.effective_prompt().to_string();
         let provider: Arc<dyn my_mind_core::llm::LlmProvider> = match config.llm.provider.as_str() {
             "anthropic" | "claude" => Arc::new(AnthropicProvider::new(
                 config.llm.api_key.clone(),
@@ -47,6 +53,7 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
                 Some(config.llm.model.clone()),
                 Some(config.llm.temperature),
                 Some(config.llm.max_tokens),
+                prompt,
             )),
             // "openai", "openrouter", "alibaba" 等 OpenAI 兼容格式统一走 OpenAiProvider
             _ => Arc::new(OpenAiProvider::new(
@@ -55,6 +62,7 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
                 Some(config.llm.model.clone()),
                 Some(config.llm.temperature),
                 Some(config.llm.max_tokens),
+                prompt,
             )),
         };
         Some(provider)
@@ -74,6 +82,7 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
                     let _ = app_handle.emit(events::EVENT_PIPELINE_STATE, s);
                 }
                 PipelineEvent::AsrResult(text) => {
+                    *asr_text_for_events.lock().unwrap() = Some(text.clone());
                     let _ = app_handle.emit(events::EVENT_ASR_RESULT, text);
                 }
                 PipelineEvent::LlmResult(text) => {
@@ -97,21 +106,21 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
             Ok(final_text) => {
                 info!("[output] Pipeline completed, text length={}, content: {:?}", final_text.len(), final_text);
 
-                // Hide overlay window
-                debug!("[output] Hiding overlay window...");
-                if let Some(window) = app_handle.get_webview_window("overlay") {
-                    let _ = window.hide();
-                    debug!("[output] Overlay window hidden");
-                } else {
-                    debug!("[output] Overlay window not found");
-                }
-
                 // Get previously active app for focus restoration
                 let previous_app = {
                     let state = app_handle.state::<AppState>();
                     let result = state.previous_app.lock().unwrap().take();
                     result
                 };
+
+                // Save to history
+                if !final_text.is_empty() {
+                    let asr = asr_text_captured.lock().unwrap().take().unwrap_or_default();
+                    let state = app_handle.state::<AppState>();
+                    if let Err(e) = state.history.insert(&asr, &final_text, previous_app.as_deref()) {
+                        error!("[history] Failed to save record: {}", e);
+                    }
+                }
 
                 info!("[output] auto_paste={}, text_empty={}", auto_paste, final_text.is_empty());
 
@@ -131,38 +140,66 @@ pub async fn start_recording_inner(app: &AppHandle) -> Result<(), String> {
                         Ok(_) => {
                             info!("[output] Step 2/3: Text set to clipboard successfully");
 
-                            // Step 3: Activate target app + paste in one osascript call
+                            // Step 3: Activate target app + paste
+                            // Use spawn_blocking to avoid blocking the tokio runtime
+                            // (activate_and_paste uses std::thread::sleep + blocking I/O)
                             info!("[output] Step 3/3: Activate + paste...");
-                            if let Some(ref bundle_id) = previous_app {
-                                match InputSimulator::activate_and_paste(bundle_id) {
-                                    Ok(_) => info!("[output] Step 3/3: Activate + paste succeeded"),
-                                    Err(e) => error!("[output] Step 3/3: Activate + paste failed: {}", e),
+                            let paste_bundle = previous_app.clone();
+                            let paste_ok;
+                            let paste_result = tokio::task::spawn_blocking(move || {
+                                if let Some(ref bundle_id) = paste_bundle {
+                                    InputSimulator::activate_and_paste(bundle_id)
+                                } else {
+                                    Err(anyhow::anyhow!("未检测到目标应用，文本已复制到剪贴板，请手动粘贴"))
                                 }
-                            } else {
-                                warn!("[output] No previous app, falling back to plain paste");
-                                match InputSimulator::paste() {
-                                    Ok(_) => info!("[output] Step 3/3: Plain paste succeeded"),
-                                    Err(e) => error!("[output] Step 3/3: Plain paste failed: {}", e),
+                            }).await;
+                            match paste_result {
+                                Ok(Ok(_)) => {
+                                    info!("[output] Step 3/3: Activate + paste succeeded");
+                                    paste_ok = true;
+                                }
+                                Ok(Err(e)) => {
+                                    error!("[output] Step 3/3: Activate + paste failed: {}", e);
+                                    paste_ok = false;
+                                    // Show error on overlay
+                                    let _ = app_handle.emit(events::EVENT_PIPELINE_ERROR, e.to_string());
+                                }
+                                Err(e) => {
+                                    error!("[output] Step 3/3: Paste task panicked: {}", e);
+                                    paste_ok = false;
+                                    let _ = app_handle.emit(events::EVENT_PIPELINE_ERROR, "粘贴异常，文本已复制到剪贴板，请手动粘贴".to_string());
                                 }
                             }
 
-                            // Wait for paste to complete before restoring clipboard
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-                            info!("[output] Restoring original clipboard...");
-                            match clipboard.restore() {
-                                Ok(_) => info!("[output] Clipboard restored successfully"),
-                                Err(e) => error!("[output] Failed to restore clipboard: {}", e),
+                            if paste_ok {
+                                // Paste succeeded — hide overlay, wait for target app to consume clipboard, then restore
+                                if let Some(window) = app_handle.get_webview_window("overlay") {
+                                    let _ = window.hide();
+                                }
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                                info!("[output] Restoring original clipboard...");
+                                match clipboard.restore() {
+                                    Ok(_) => info!("[output] Clipboard restored successfully"),
+                                    Err(e) => error!("[output] Failed to restore clipboard: {}", e),
+                                }
+                            } else {
+                                // Paste failed — keep text in clipboard, overlay stays visible
+                                // until user presses Esc or starts a new recording
+                                warn!("[output] Paste failed, leaving text in clipboard for manual paste");
                             }
                         }
                         Err(e) => {
                             error!("[output] Step 2/3: Failed to set clipboard text: {}", e);
+                            let _ = app_handle.emit(events::EVENT_PIPELINE_ERROR, format!("剪贴板写入失败: {}", e));
                         }
                     }
 
                     info!("[output] Clipboard + paste flow completed");
                 } else {
-                    // No paste needed, just restore focus
+                    // No paste needed, hide overlay and restore focus
+                    if let Some(window) = app_handle.get_webview_window("overlay") {
+                        let _ = window.hide();
+                    }
                     if let Some(ref bundle_id) = previous_app {
                         info!("[focus] Restoring focus to: {}", bundle_id);
                         if let Err(e) = FocusManager::activate_app(bundle_id) {

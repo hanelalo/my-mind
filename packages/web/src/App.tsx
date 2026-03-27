@@ -36,7 +36,15 @@ function App() {
     document.addEventListener("keydown", handleKeyDown);
 
     const unlistenState = await listen<string>("pipeline:state", (e) => {
-      setState(e.payload as PipelineState);
+      const newState = e.payload as PipelineState;
+      setState(newState);
+      // Clear previous results when a new recording starts
+      if (newState === "recording") {
+        setAsrText("");
+        setLlmText("");
+        setFinalText("");
+        setError("");
+      }
     });
 
     const unlistenAsr = await listen<string>("asr:result", (e) => {

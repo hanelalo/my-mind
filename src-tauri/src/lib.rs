@@ -1,7 +1,8 @@
 mod setup;
 
 use my_mind_core::config::AppConfig;
-use my_mind_tauri::commands::{recording, settings};
+use my_mind_core::history::HistoryStore;
+use my_mind_tauri::commands::{recording, settings, history};
 use my_mind_tauri::state::AppState;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -29,7 +30,11 @@ pub fn run() {
         config.llm.provider,
     );
 
-    let app_state = AppState::new(config);
+    let history = {
+        let path = HistoryStore::default_path().expect("Cannot determine history database path");
+        HistoryStore::new(path).expect("Failed to open history database")
+    };
+    let app_state = AppState::new(config, history);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
@@ -42,6 +47,10 @@ pub fn run() {
             recording::is_recording,
             settings::get_config,
             settings::save_config,
+            history::get_history,
+            history::get_history_count,
+            history::delete_history_record,
+            history::clear_history,
         ])
         .setup(setup::setup)
         .run(tauri::generate_context!())

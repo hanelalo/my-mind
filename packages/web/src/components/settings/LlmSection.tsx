@@ -115,6 +115,21 @@ export default function LlmSection(props: Props) {
             max="65535"
           />
         </div>
+        <div class="col-span-2">
+          <label class={labelClass}>System Prompt</label>
+          <textarea
+            class={inputClass + " min-h-[80px] resize-y"}
+            value={props.config.prompt}
+            onInput={(e) => props.onChange("prompt", e.currentTarget.value)}
+            disabled={disabled()}
+            placeholder="Leave empty to use built-in default prompt"
+            rows={4}
+          />
+          <p class="mt-1 text-xs text-gray-400">
+            Custom system prompt for post-processing. Leave empty to use the
+            built-in default.
+          </p>
+        </div>
       </div>
     </section>
   );

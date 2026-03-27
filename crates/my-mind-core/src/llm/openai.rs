@@ -1,4 +1,4 @@
-use super::{prompts, LlmProvider};
+use super::LlmProvider;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ pub struct OpenAiProvider {
     model: String,
     temperature: f32,
     max_tokens: u16,
+    prompt: String,
 }
 
 #[derive(Serialize)]
@@ -49,6 +50,7 @@ impl OpenAiProvider {
         model: Option<String>,
         temperature: Option<f32>,
         max_tokens: Option<u16>,
+        prompt: String,
     ) -> Self {
         Self {
             client: reqwest::Client::new(),
@@ -57,6 +59,7 @@ impl OpenAiProvider {
             model: model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
             temperature: temperature.unwrap_or(0.3),
             max_tokens: max_tokens.unwrap_or(2048),
+            prompt,
         }
     }
 }
@@ -75,7 +78,7 @@ impl LlmProvider for OpenAiProvider {
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
-                    content: prompts::POST_PROCESS_PROMPT.to_string(),
+                    content: self.prompt.clone(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
