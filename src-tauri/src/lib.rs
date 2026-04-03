@@ -51,7 +51,9 @@ pub fn run() {
             history::get_history_count,
             history::delete_history_record,
             history::clear_history,
+            diagnosis::check_quality,
             diagnosis::diagnose_prompt,
+            diagnosis::apply_prompt_suggestion,
         ])
         .setup(setup::setup)
         .run(tauri::generate_context!())

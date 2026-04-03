@@ -24,6 +24,23 @@ export interface DiagnosisResponse {
   reply: string;
 }
 
+export interface QualityCheckRequest {
+  asr_text: string;
+  final_text: string;
+}
+
+export interface QualityCheckResponse {
+  report: string;
+}
+
+export interface ApplyPromptSuggestionRequest {
+  suggestions: string;
+}
+
+export interface ApplyPromptSuggestionResponse {
+  new_prompt: string;
+}
+
 export async function getHistory(
   limit: number,
   offset: number
@@ -47,4 +64,16 @@ export async function diagnosePrompt(
   request: DiagnosisRequest
 ): Promise<DiagnosisResponse> {
   return invoke("diagnose_prompt", { request });
+}
+
+export async function checkQuality(
+  request: QualityCheckRequest
+): Promise<QualityCheckResponse> {
+  return invoke("check_quality", { request });
+}
+
+export async function applyPromptSuggestion(
+  request: ApplyPromptSuggestionRequest
+): Promise<ApplyPromptSuggestionResponse> {
+  return invoke("apply_prompt_suggestion", { request });
 }

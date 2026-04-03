@@ -2,7 +2,7 @@ pub mod anthropic;
 pub mod openai;
 pub mod prompts;
 
-pub use prompts::PROMPT_DIAGNOSIS_SYSTEM;
+pub use prompts::{PROMPT_DIAGNOSIS_SYSTEM, PROMPT_MERGE_SYSTEM, QUALITY_CHECK_SYSTEM};
 
 use anyhow::Result;
 use async_trait::async_trait;

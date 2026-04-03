@@ -5,9 +5,12 @@ import {
   deleteHistoryRecord,
   clearHistory,
   diagnosePrompt,
+  checkQuality,
+  applyPromptSuggestion,
   type HistoryRecord,
   type DiagnosisMessage,
 } from "./lib/history";
+import { getConfig, saveConfig } from "./lib/config";
 
 const PAGE_SIZE = 20;
 
@@ -29,6 +32,17 @@ export default function HistoryApp() {
   const [diagnosisMessages, setDiagnosisMessages] = createSignal<DiagnosisMessage[]>([]);
   const [diagnosisInput, setDiagnosisInput] = createSignal("");
   const [diagnosisLoading, setDiagnosisLoading] = createSignal(false);
+
+  // Quality check state
+  const [qualityCheckRecord, setQualityCheckRecord] = createSignal<HistoryRecord | null>(null);
+  const [qualityCheckReport, setQualityCheckReport] = createSignal<string | null>(null);
+  const [qualityCheckLoading, setQualityCheckLoading] = createSignal(false);
+
+  // Apply suggestion state
+  const [applyLoading, setApplyLoading] = createSignal(false);
+  const [previewPrompt, setPreviewPrompt] = createSignal<string | null>(null);
+  const [saveLoading, setSaveLoading] = createSignal(false);
+  const [saveSuccess, setSaveSuccess] = createSignal(false);
 
   const totalPages = () => Math.max(1, Math.ceil(total() / PAGE_SIZE));
 
@@ -132,6 +146,67 @@ export default function HistoryApp() {
     }
   };
 
+  const runQualityCheck = async (record: HistoryRecord) => {
+    if (qualityCheckLoading()) return;
+
+    setQualityCheckRecord(record);
+    setQualityCheckReport(null);
+    setQualityCheckLoading(true);
+
+    try {
+      const response = await checkQuality({
+        asr_text: record.asr_text,
+        final_text: record.final_text,
+      });
+      setQualityCheckReport(response.report);
+    } catch (e) {
+      console.error("Quality check failed:", e);
+      setQualityCheckReport(`Error: ${e instanceof Error ? e.message : "Failed to get quality check"}`);
+    } finally {
+      setQualityCheckLoading(false);
+    }
+  };
+
+  const closeQualityCheck = () => {
+    setQualityCheckRecord(null);
+    setQualityCheckReport(null);
+  };
+
+  const handleApplySuggestion = async (suggestions: string) => {
+    if (applyLoading()) return;
+    setApplyLoading(true);
+    try {
+      const response = await applyPromptSuggestion({ suggestions });
+      setPreviewPrompt(response.new_prompt);
+    } catch (e) {
+      console.error("Apply suggestion failed:", e);
+      alert(`Failed to apply suggestion: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setApplyLoading(false);
+    }
+  };
+
+  const handleSavePrompt = async () => {
+    const newPrompt = previewPrompt();
+    if (newPrompt === null || saveLoading()) return;
+    setSaveLoading(true);
+    setSaveSuccess(false);
+    try {
+      const config = await getConfig();
+      config.llm.prompt = newPrompt;
+      await saveConfig(config);
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setPreviewPrompt(null);
+        setSaveSuccess(false);
+      }, 1500);
+    } catch (e) {
+      console.error("Save prompt failed:", e);
+    } finally {
+      setSaveLoading(false);
+    }
+  };
+
   return (
     <div class="flex min-h-screen flex-col bg-gray-50">
       {/* Header */}
@@ -194,6 +269,76 @@ export default function HistoryApp() {
                           </div>
                         </div>
                         <div class="flex shrink-0 items-center gap-1">
+                          <button
+                            class="rounded p-1 text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600"
+                            title="Diagnose Prompt Issue"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDiagnosis(record);
+                            }}
+                          >
+                            <svg
+                              class="h-4 w-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                              />
+                            </svg>
+                          </button>
+                          <button
+                            class="rounded p-1 text-green-400 hover:bg-green-50 hover:text-green-600"
+                            title="Check Quality"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              runQualityCheck(record);
+                            }}
+                            disabled={qualityCheckLoading() && qualityCheckRecord()?.id === record.id}
+                          >
+                            <Show
+                              when={!(qualityCheckLoading() && qualityCheckRecord()?.id === record.id)}
+                              fallback={
+                                <svg
+                                  class="h-4 w-4 animate-spin"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <circle
+                                    class="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    stroke-width="4"
+                                  />
+                                  <path
+                                    class="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                  />
+                                </svg>
+                              }
+                            >
+                              <svg
+                                class="h-4 w-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                />
+                              </svg>
+                            </Show>
+                          </button>
                           <button
                             class="rounded p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
                             title="Copy"
@@ -268,30 +413,7 @@ export default function HistoryApp() {
                               {record.final_text}
                             </p>
                           </div>
-                          <div class="pt-2">
-                            <button
-                              class="flex items-center gap-1.5 rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-100"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openDiagnosis(record);
-                              }}
-                            >
-                              <svg
-                                class="h-3.5 w-3.5"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  stroke-width="2"
-                                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                                />
-                              </svg>
-                              Diagnose Prompt Issue
-                            </button>
-                          </div>
+
                         </div>
                       </Show>
                     </li>
@@ -324,6 +446,115 @@ export default function HistoryApp() {
             Next
           </button>
         </div>
+      </Show>
+
+      {/* Quality Check Dialog */}
+      <Show when={qualityCheckRecord()}>
+        {(record) => (
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) closeQualityCheck();
+            }}
+          >
+            <div class="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl">
+              {/* Header */}
+              <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                <div>
+                  <h2 class="text-sm font-semibold text-gray-900">
+                    Quality Check Report
+                  </h2>
+                  <p class="text-xs text-gray-500">
+                    Evaluating output against prompt specifications
+                  </p>
+                </div>
+                <button
+                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  onClick={closeQualityCheck}
+                >
+                  <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Content */}
+              <div class="flex-1 overflow-y-auto p-4">
+                <Show
+                  when={!qualityCheckLoading()}
+                  fallback={
+                    <div class="flex flex-col items-center justify-center py-12">
+                      <div class="h-8 w-8 animate-spin rounded-full border-2 border-green-500 border-t-transparent" />
+                      <p class="mt-3 text-sm text-gray-500">Analyzing output quality...</p>
+                    </div>
+                  }
+                >
+                  <Show
+                    when={qualityCheckReport()}
+                    fallback={
+                      <div class="py-8 text-center">
+                        <p class="text-sm text-gray-400">Click "Check Quality" to generate a report</p>
+                      </div>
+                    }
+                  >
+                    <div class="prose prose-sm max-w-none">
+                      <div class="whitespace-pre-wrap text-sm text-gray-800">
+                        {qualityCheckReport()}
+                      </div>
+                    </div>
+                  </Show>
+                </Show>
+              </div>
+
+              {/* Footer */}
+              <div class="border-t border-gray-200 px-4 py-3 flex items-center justify-between">
+                <Show
+                  when={qualityCheckReport() && !qualityCheckLoading()}
+                >
+                  <button
+                    class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-2"
+                    onClick={() => handleApplySuggestion(qualityCheckReport()!)}
+                    disabled={applyLoading()}
+                  >
+                    <Show
+                      when={!applyLoading()}
+                      fallback={
+                        <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      }
+                    >
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </Show>
+                    {applyLoading() ? "生成中..." : "应用建议到提示词"}
+                  </button>
+                </Show>
+                <Show when={!qualityCheckReport() || qualityCheckLoading()}>
+                  <div />
+                </Show>
+                <button
+                  class="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
+                  onClick={closeQualityCheck}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </Show>
 
       {/* Diagnosis Dialog */}
@@ -398,10 +629,10 @@ export default function HistoryApp() {
                 >
                   <div class="space-y-3">
                     <For each={diagnosisMessages()}>
-                      {(msg) => (
+                      {(msg, index) => (
                         <div
-                          class={`flex ${
-                            msg.role === "user" ? "justify-end" : "justify-start"
+                          class={`flex flex-col ${
+                            msg.role === "user" ? "items-end" : "items-start"
                           }`}
                         >
                           <div
@@ -413,6 +644,34 @@ export default function HistoryApp() {
                           >
                             <div class="whitespace-pre-wrap">{msg.content}</div>
                           </div>
+                          {/* Apply suggestion button on last assistant message */}
+                          <Show
+                            when={
+                              msg.role === "assistant" &&
+                              index() === diagnosisMessages().length - 1
+                            }
+                          >
+                            <button
+                              class="mt-1.5 flex items-center gap-1.5 rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-100 disabled:opacity-50"
+                              onClick={() => handleApplySuggestion(msg.content)}
+                              disabled={applyLoading()}
+                            >
+                              <Show
+                                when={!applyLoading()}
+                                fallback={
+                                  <svg class="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                }
+                              >
+                                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </Show>
+                              {applyLoading() ? "生成新提示词..." : "应用建议到提示词"}
+                            </button>
+                          </Show>
                         </div>
                       )}
                     </For>
@@ -460,6 +719,86 @@ export default function HistoryApp() {
             </div>
           </div>
         )}
+      </Show>
+
+      {/* Preview & Confirm Prompt Dialog */}
+      <Show when={previewPrompt() !== null}>
+        <div
+          class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPreviewPrompt(null);
+          }}
+        >
+          <div class="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-2xl">
+            {/* Header */}
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <div>
+                <h2 class="text-sm font-semibold text-gray-900">确认新提示词</h2>
+                <p class="text-xs text-gray-500">以下是合并建议后的完整提示词，确认后将自动保存到设置</p>
+              </div>
+              <button
+                class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                onClick={() => setPreviewPrompt(null)}
+              >
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Prompt Content */}
+            <div class="flex-1 overflow-y-auto p-4">
+              <textarea
+                class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 font-mono focus:border-indigo-500 focus:outline-none"
+                style="min-height: 300px; resize: vertical;"
+                value={previewPrompt() ?? ""}
+                onInput={(e) => setPreviewPrompt(e.currentTarget.value)}
+              />
+              <p class="mt-2 text-xs text-gray-400">可以在保存前手动调整</p>
+            </div>
+
+            {/* Footer */}
+            <div class="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+              <button
+                class="rounded-md bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200"
+                onClick={() => setPreviewPrompt(null)}
+              >
+                取消
+              </button>
+              <button
+                class={`rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-50 flex items-center gap-2 ${
+                  saveSuccess() ? "bg-green-600 hover:bg-green-700" : "bg-indigo-600 hover:bg-indigo-700"
+                }`}
+                onClick={handleSavePrompt}
+                disabled={saveLoading() || saveSuccess()}
+              >
+                <Show
+                  when={!saveLoading() && !saveSuccess()}
+                  fallback={
+                    <Show
+                      when={saveSuccess()}
+                      fallback={
+                        <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      }
+                    >
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </Show>
+                  }
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                </Show>
+                {saveSuccess() ? "已保存！" : saveLoading() ? "保存中..." : "确认保存"}
+              </button>
+            </div>
+          </div>
+        </div>
       </Show>
     </div>
   );

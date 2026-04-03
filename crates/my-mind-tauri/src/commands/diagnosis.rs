@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use my_mind_core::llm::{
     anthropic::AnthropicProvider, openai::OpenAiProvider, ChatMessage, LlmProvider, MessageRole,
-    PROMPT_DIAGNOSIS_SYSTEM,
+    PROMPT_DIAGNOSIS_SYSTEM, PROMPT_MERGE_SYSTEM, QUALITY_CHECK_SYSTEM,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -140,5 +140,206 @@ pub async fn diagnose_prompt(
     match provider.chat(messages).await {
         Ok(reply) => Ok(DiagnosisResponse { reply }),
         Err(e) => Err(format!("Failed to get diagnosis: {}", e)),
+    }
+}
+
+/// Request for quality check
+#[derive(serde::Deserialize)]
+pub struct QualityCheckRequest {
+    pub asr_text: String,
+    pub final_text: String,
+}
+
+/// Response from quality check
+#[derive(serde::Serialize)]
+pub struct QualityCheckResponse {
+    pub report: String,
+}
+
+/// Check the quality of a processed output against the prompt specifications
+#[tauri::command]
+pub async fn check_quality(
+    state: State<'_, AppState>,
+    request: QualityCheckRequest,
+) -> Result<QualityCheckResponse, String> {
+    let config = state.config.lock().await;
+    let llm_config = &config.llm;
+
+    // Clone necessary values before dropping the lock
+    let provider_type = llm_config.provider.clone();
+    let api_key = llm_config.api_key.clone();
+    let api_base_url = llm_config.api_base_url.clone();
+    let model = llm_config.model.clone();
+    let temperature = llm_config.temperature;
+    let max_tokens = llm_config.max_tokens;
+    let effective_prompt = llm_config.effective_prompt().to_string();
+
+    // Create LLM provider based on configuration
+    let provider: Arc<dyn LlmProvider> = match provider_type.as_str() {
+        "openai" => {
+            if api_key.is_empty() {
+                return Err("OpenAI API key is not configured".to_string());
+            }
+            Arc::new(OpenAiProvider::new(
+                api_key,
+                api_base_url,
+                Some(model),
+                Some(temperature),
+                Some(max_tokens),
+                effective_prompt.clone(),
+            ))
+        }
+        "anthropic" => {
+            if api_key.is_empty() {
+                return Err("Anthropic API key is not configured".to_string());
+            }
+            Arc::new(AnthropicProvider::new(
+                api_key,
+                api_base_url,
+                Some(model),
+                Some(temperature),
+                Some(max_tokens),
+                effective_prompt.clone(),
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "LLM provider '{}' is not supported for quality check",
+                provider_type
+            ));
+        }
+    };
+
+    drop(config);
+
+    // Build the conversation messages
+    let messages: Vec<ChatMessage> = vec![
+        ChatMessage {
+            role: MessageRole::System,
+            content: QUALITY_CHECK_SYSTEM.to_string(),
+        },
+        ChatMessage {
+            role: MessageRole::User,
+            content: format!(
+                "Please evaluate the quality of this post-processing output:
+
+**Post-Processing Prompt (the specifications that should have been followed):**
+```
+{}
+```
+
+**Original ASR Transcript:**
+```
+{}
+```
+
+**Final Processed Output (to evaluate):**
+```
+{}
+```",
+                effective_prompt,
+                request.asr_text,
+                request.final_text
+            ),
+        },
+    ];
+
+    // Send to LLM
+    match provider.chat(messages).await {
+        Ok(report) => Ok(QualityCheckResponse { report }),
+        Err(e) => Err(format!("Failed to get quality check: {}", e)),
+    }
+}
+
+/// Request to apply prompt improvement suggestions
+#[derive(serde::Deserialize)]
+pub struct ApplyPromptSuggestionRequest {
+    /// The suggestions text (from quality check report or diagnosis conversation)
+    pub suggestions: String,
+}
+
+/// Response containing the merged prompt
+#[derive(serde::Serialize)]
+pub struct ApplyPromptSuggestionResponse {
+    /// The new complete prompt after merging suggestions
+    pub new_prompt: String,
+}
+
+/// Use LLM to merge improvement suggestions into the current prompt and return the new prompt
+#[tauri::command]
+pub async fn apply_prompt_suggestion(
+    state: State<'_, AppState>,
+    request: ApplyPromptSuggestionRequest,
+) -> Result<ApplyPromptSuggestionResponse, String> {
+    let config = state.config.lock().await;
+    let llm_config = &config.llm;
+
+    // Clone necessary values before dropping the lock
+    let provider_type = llm_config.provider.clone();
+    let api_key = llm_config.api_key.clone();
+    let api_base_url = llm_config.api_base_url.clone();
+    let model = llm_config.model.clone();
+    let temperature = llm_config.temperature;
+    let max_tokens = llm_config.max_tokens;
+    let effective_prompt = llm_config.effective_prompt().to_string();
+
+    // Create LLM provider based on configuration
+    let provider: Arc<dyn LlmProvider> = match provider_type.as_str() {
+        "openai" => {
+            if api_key.is_empty() {
+                return Err("OpenAI API key is not configured".to_string());
+            }
+            Arc::new(OpenAiProvider::new(
+                api_key,
+                api_base_url,
+                Some(model),
+                Some(temperature),
+                Some(max_tokens),
+                effective_prompt.clone(),
+            ))
+        }
+        "anthropic" => {
+            if api_key.is_empty() {
+                return Err("Anthropic API key is not configured".to_string());
+            }
+            Arc::new(AnthropicProvider::new(
+                api_key,
+                api_base_url,
+                Some(model),
+                Some(temperature),
+                Some(max_tokens),
+                effective_prompt.clone(),
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "LLM provider '{}' is not supported for applying suggestions",
+                provider_type
+            ));
+        }
+    };
+
+    drop(config);
+
+    // Build messages: system prompt + user request with current prompt + suggestions
+    let messages: Vec<ChatMessage> = vec![
+        ChatMessage {
+            role: MessageRole::System,
+            content: PROMPT_MERGE_SYSTEM.to_string(),
+        },
+        ChatMessage {
+            role: MessageRole::User,
+            content: format!(
+                "**Current Post-Processing Prompt:**\n```\n{}\n```\n\n**Improvement Suggestions to Apply:**\n{}\n\nPlease output the complete updated prompt.",
+                effective_prompt,
+                request.suggestions
+            ),
+        },
+    ];
+
+    // Send to LLM
+    match provider.chat(messages).await {
+        Ok(new_prompt) => Ok(ApplyPromptSuggestionResponse { new_prompt }),
+        Err(e) => Err(format!("Failed to apply suggestion: {}", e)),
     }
 }
