@@ -25,7 +25,8 @@ A lightweight, intelligent voice-to-text desktop application for macOS. Press a 
 - **Auto-Paste** - Automatically pastes the result into the previously active application (WeChat, browser, editor, etc.)
 - **Error Feedback** - Overlay shows error messages on failure; text stays in clipboard for manual paste
 - **Focus Management** - Captures the frontmost app before showing the overlay, restores focus after processing
-- **History** - All transcriptions are saved locally (SQLite). Browse, search, copy, and delete past records from the History window
+- **History** - All transcriptions are saved locally (SQLite). Browse, copy, and delete past records from the History window
+- **Prompt Diagnosis** - When you find issues with a transcription result, chat with the LLM directly from History to diagnose the problem and get suggestions for improving your prompt
 - **Settings UI** - Configure ASR, LLM, prompt, shortcuts, and output preferences from the system tray
 - **macOS Native** - HudWindow overlay effect, system tray integration, accessibility permission auto-detection, CGEvent-based input simulation
 
@@ -120,7 +121,8 @@ my-mind/
 - [ ] Streaming ASR for real-time transcription display
 - [ ] Multi-language auto-detection
 - [ ] Windows and Linux support
-- [ ] History search and export
+- [x] History search and export
+- [x] Prompt diagnosis from history records
 
 ## License
 

@@ -1,4 +1,4 @@
-use super::LlmProvider;
+use super::{ChatMessage, LlmProvider, MessageRole};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,14 +17,15 @@ pub struct AnthropicProvider {
 #[derive(Serialize)]
 struct MessagesRequest {
     model: String,
-    system: String,
-    messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
+    messages: Vec<ApiMessage>,
     temperature: f32,
     max_tokens: u16,
 }
 
 #[derive(Serialize)]
-struct Message {
+struct ApiMessage {
     role: String,
     content: String,
 }
@@ -73,8 +74,8 @@ impl LlmProvider for AnthropicProvider {
 
         let request = MessagesRequest {
             model: self.model.clone(),
-            system: self.prompt.clone(),
-            messages: vec![Message {
+            system: Some(self.prompt.clone()),
+            messages: vec![ApiMessage {
                 role: "user".to_string(),
                 content: raw_transcript.to_string(),
             }],
@@ -119,6 +120,77 @@ impl LlmProvider for AnthropicProvider {
             .join("");
 
         info!("Anthropic post-processed: \"{}\"", text);
+        Ok(text)
+    }
+
+    async fn chat(&self, messages: Vec<ChatMessage>) -> Result<String> {
+        if messages.is_empty() {
+            return Ok(String::new());
+        }
+
+        let url = format!("{}/v1/messages", self.base_url);
+
+        // Separate system messages from other messages
+        let system_content: Option<String> = messages
+            .iter()
+            .filter(|m| matches!(m.role, MessageRole::System))
+            .map(|m| m.content.clone())
+            .reduce(|acc, content| acc + "\n\n" + &content);
+
+        let api_messages: Vec<ApiMessage> = messages
+            .into_iter()
+            .filter(|m| !matches!(m.role, MessageRole::System))
+            .map(|m| ApiMessage {
+                role: match m.role {
+                    MessageRole::User => "user".to_string(),
+                    MessageRole::Assistant => "assistant".to_string(),
+                    MessageRole::System => unreachable!(),
+                },
+                content: m.content,
+            })
+            .collect();
+
+        let request = MessagesRequest {
+            model: self.model.clone(),
+            system: system_content,
+            messages: api_messages,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+        };
+
+        debug!("Sending chat request to Anthropic (model: {})", self.model);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send chat request to Anthropic API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Anthropic API error ({}): {}", status, error_body);
+        }
+
+        let result: MessagesResponse = response
+            .json()
+            .await
+            .context("Failed to parse Anthropic API response")?;
+
+        let text = result
+            .content
+            .iter()
+            .filter(|b| b.content_type == "text")
+            .filter_map(|b| b.text.as_deref())
+            .collect::<Vec<_>>()
+            .join("");
+
+        info!("Anthropic chat response received");
         Ok(text)
     }
 }

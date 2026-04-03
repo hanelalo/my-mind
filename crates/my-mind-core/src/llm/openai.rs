@@ -1,4 +1,4 @@
-use super::LlmProvider;
+use super::{ChatMessage, LlmProvider, MessageRole};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,13 +17,13 @@ pub struct OpenAiProvider {
 #[derive(Serialize)]
 struct ChatRequest {
     model: String,
-    messages: Vec<ChatMessage>,
+    messages: Vec<ApiChatMessage>,
     temperature: f32,
     max_tokens: u16,
 }
 
 #[derive(Serialize)]
-struct ChatMessage {
+struct ApiChatMessage {
     role: String,
     content: String,
 }
@@ -35,11 +35,11 @@ struct ChatResponse {
 
 #[derive(Deserialize)]
 struct ChatChoice {
-    message: ChatResponseMessage,
+    message: ApiResponseMessage,
 }
 
 #[derive(Deserialize)]
-struct ChatResponseMessage {
+struct ApiResponseMessage {
     content: Option<String>,
 }
 
@@ -76,11 +76,11 @@ impl LlmProvider for OpenAiProvider {
         let request = ChatRequest {
             model: self.model.clone(),
             messages: vec![
-                ChatMessage {
+                ApiChatMessage {
                     role: "system".to_string(),
                     content: self.prompt.clone(),
                 },
-                ChatMessage {
+                ApiChatMessage {
                     role: "user".to_string(),
                     content: raw_transcript.to_string(),
                 },
@@ -122,6 +122,64 @@ impl LlmProvider for OpenAiProvider {
             .unwrap_or_default();
 
         info!("LLM post-processed: \"{}\"", text);
+        Ok(text)
+    }
+
+    async fn chat(&self, messages: Vec<ChatMessage>) -> Result<String> {
+        if messages.is_empty() {
+            return Ok(String::new());
+        }
+
+        let url = format!("{}/chat/completions", self.base_url);
+
+        let api_messages: Vec<ApiChatMessage> = messages
+            .into_iter()
+            .map(|m| ApiChatMessage {
+                role: match m.role {
+                    MessageRole::System => "system".to_string(),
+                    MessageRole::User => "user".to_string(),
+                    MessageRole::Assistant => "assistant".to_string(),
+                },
+                content: m.content,
+            })
+            .collect();
+
+        let request = ChatRequest {
+            model: self.model.clone(),
+            messages: api_messages,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+        };
+
+        debug!("Sending chat request to LLM (model: {})", self.model);
+
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send chat request to LLM API")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error ({}): {}", status, error_body);
+        }
+
+        let result: ChatResponse = response
+            .json()
+            .await
+            .context("Failed to parse LLM API response")?;
+
+        let text = result
+            .choices
+            .first()
+            .and_then(|c| c.message.content.clone())
+            .unwrap_or_default();
+
+        info!("LLM chat response received");
         Ok(text)
     }
 }

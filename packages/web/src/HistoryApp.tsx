@@ -4,7 +4,9 @@ import {
   getHistoryCount,
   deleteHistoryRecord,
   clearHistory,
+  diagnosePrompt,
   type HistoryRecord,
+  type DiagnosisMessage,
 } from "./lib/history";
 
 const PAGE_SIZE = 20;
@@ -21,6 +23,12 @@ export default function HistoryApp() {
   const [page, setPage] = createSignal(0);
   const [loading, setLoading] = createSignal(true);
   const [expanded, setExpanded] = createSignal<string | null>(null);
+  
+  // Diagnosis dialog state
+  const [diagnosingRecord, setDiagnosingRecord] = createSignal<HistoryRecord | null>(null);
+  const [diagnosisMessages, setDiagnosisMessages] = createSignal<DiagnosisMessage[]>([]);
+  const [diagnosisInput, setDiagnosisInput] = createSignal("");
+  const [diagnosisLoading, setDiagnosisLoading] = createSignal(false);
 
   const totalPages = () => Math.max(1, Math.ceil(total() / PAGE_SIZE));
 
@@ -74,6 +82,54 @@ export default function HistoryApp() {
     setPage(p);
     setExpanded(null);
     load();
+  };
+
+  const openDiagnosis = (record: HistoryRecord) => {
+    setDiagnosingRecord(record);
+    setDiagnosisMessages([]);
+    setDiagnosisInput("");
+  };
+
+  const closeDiagnosis = () => {
+    setDiagnosingRecord(null);
+    setDiagnosisMessages([]);
+    setDiagnosisInput("");
+  };
+
+  const sendDiagnosisMessage = async () => {
+    const record = diagnosingRecord();
+    const message = diagnosisInput().trim();
+    if (!record || !message || diagnosisLoading()) return;
+
+    const userMessage: DiagnosisMessage = { role: "user", content: message };
+    const currentMessages = diagnosisMessages();
+    setDiagnosisMessages([...currentMessages, userMessage]);
+    setDiagnosisInput("");
+    setDiagnosisLoading(true);
+
+    try {
+      const response = await diagnosePrompt({
+        asr_text: record.asr_text,
+        final_text: record.final_text,
+        user_message: message,
+        conversation_history: currentMessages,
+      });
+
+      const assistantMessage: DiagnosisMessage = {
+        role: "assistant",
+        content: response.reply,
+      };
+      setDiagnosisMessages([...currentMessages, userMessage, assistantMessage]);
+    } catch (e) {
+      console.error("Diagnosis failed:", e);
+      const errorMessage: DiagnosisMessage = {
+        role: "assistant",
+        content: `Error: ${e instanceof Error ? e.message : "Failed to get response"}`,
+      };
+      setDiagnosisMessages([...currentMessages, userMessage, errorMessage]);
+    } finally {
+      setDiagnosisLoading(false);
+    }
   };
 
   return (
@@ -212,6 +268,30 @@ export default function HistoryApp() {
                               {record.final_text}
                             </p>
                           </div>
+                          <div class="pt-2">
+                            <button
+                              class="flex items-center gap-1.5 rounded-md bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDiagnosis(record);
+                              }}
+                            >
+                              <svg
+                                class="h-3.5 w-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+                                />
+                              </svg>
+                              Diagnose Prompt Issue
+                            </button>
+                          </div>
                         </div>
                       </Show>
                     </li>
@@ -244,6 +324,142 @@ export default function HistoryApp() {
             Next
           </button>
         </div>
+      </Show>
+
+      {/* Diagnosis Dialog */}
+      <Show when={diagnosingRecord()}>
+        {(record) => (
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) closeDiagnosis();
+            }}
+          >
+            <div class="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl">
+              {/* Header */}
+              <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+                <div>
+                  <h2 class="text-sm font-semibold text-gray-900">
+                    Prompt Diagnosis
+                  </h2>
+                  <p class="text-xs text-gray-500">
+                    Discuss issues with this transcription and get prompt improvement suggestions
+                  </p>
+                </div>
+                <button
+                  class="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  onClick={closeDiagnosis}
+                >
+                  <svg
+                    class="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Context Info */}
+              <div class="border-b border-gray-100 bg-gray-50 px-4 py-2">
+                <div class="mb-1">
+                  <span class="text-xs font-medium text-gray-500">ASR:</span>
+                  <span class="ml-1 text-xs text-gray-700 line-clamp-1">
+                    {record().asr_text}
+                  </span>
+                </div>
+                <div>
+                  <span class="text-xs font-medium text-gray-500">Output:</span>
+                  <span class="ml-1 text-xs text-gray-700 line-clamp-1">
+                    {record().final_text}
+                  </span>
+                </div>
+              </div>
+
+              {/* Messages */}
+              <div class="flex-1 overflow-y-auto p-4">
+                <Show
+                  when={diagnosisMessages().length > 0}
+                  fallback={
+                    <div class="py-8 text-center">
+                      <p class="text-sm text-gray-400">
+                        Describe the issue with this transcription result.
+                        <br />
+                        For example: "The output removed important context" or "It incorrectly changed X to Y"
+                      </p>
+                    </div>
+                  }
+                >
+                  <div class="space-y-3">
+                    <For each={diagnosisMessages()}>
+                      {(msg) => (
+                        <div
+                          class={`flex ${
+                            msg.role === "user" ? "justify-end" : "justify-start"
+                          }`}
+                        >
+                          <div
+                            class={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                              msg.role === "user"
+                                ? "bg-indigo-600 text-white"
+                                : "bg-gray-100 text-gray-800"
+                            }`}
+                          >
+                            <div class="whitespace-pre-wrap">{msg.content}</div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                    <Show when={diagnosisLoading()}>
+                      <div class="flex justify-start">
+                        <div class="rounded-lg bg-gray-100 px-3 py-2">
+                          <div class="flex items-center gap-1">
+                            <div class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
+                            <div class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:0.1s]" />
+                            <div class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 [animation-delay:0.2s]" />
+                          </div>
+                        </div>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
+
+              {/* Input */}
+              <div class="border-t border-gray-200 p-3">
+                <div class="flex gap-2">
+                  <textarea
+                    class="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                    rows={2}
+                    placeholder="Describe the issue or ask a question..."
+                    value={diagnosisInput()}
+                    onInput={(e) => setDiagnosisInput(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendDiagnosisMessage();
+                      }
+                    }}
+                    disabled={diagnosisLoading()}
+                  />
+                  <button
+                    class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                    onClick={sendDiagnosisMessage}
+                    disabled={!diagnosisInput().trim() || diagnosisLoading()}
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </Show>
     </div>
   );

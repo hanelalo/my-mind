@@ -2,7 +2,7 @@ mod setup;
 
 use my_mind_core::config::AppConfig;
 use my_mind_core::history::HistoryStore;
-use my_mind_tauri::commands::{recording, settings, history};
+use my_mind_tauri::commands::{diagnosis, history, recording, settings};
 use my_mind_tauri::state::AppState;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -51,6 +51,7 @@ pub fn run() {
             history::get_history_count,
             history::delete_history_record,
             history::clear_history,
+            diagnosis::diagnose_prompt,
         ])
         .setup(setup::setup)
         .run(tauri::generate_context!())

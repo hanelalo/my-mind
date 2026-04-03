@@ -8,6 +8,22 @@ export interface HistoryRecord {
   target_app: string | null;
 }
 
+export interface DiagnosisMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface DiagnosisRequest {
+  asr_text: string;
+  final_text: string;
+  user_message: string;
+  conversation_history: DiagnosisMessage[];
+}
+
+export interface DiagnosisResponse {
+  reply: string;
+}
+
 export async function getHistory(
   limit: number,
   offset: number
@@ -25,4 +41,10 @@ export async function deleteHistoryRecord(id: string): Promise<void> {
 
 export async function clearHistory(): Promise<void> {
   return invoke("clear_history");
+}
+
+export async function diagnosePrompt(
+  request: DiagnosisRequest
+): Promise<DiagnosisResponse> {
+  return invoke("diagnose_prompt", { request });
 }
